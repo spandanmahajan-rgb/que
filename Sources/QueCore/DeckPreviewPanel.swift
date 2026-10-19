@@ -19,9 +19,12 @@ public final class DeckPreviewPanel: NSPanel {
     private static let morphCurve = CAMediaTimingFunction(controlPoints: 0.16, 1.0, 0.3, 1.0)
 
     /// Clips everything to the rounded shape while the panel morphs to and from the pill.
-    private let morphContainer = NSView()
-    /// The same material a native popover uses (blending stays .withinWindow per project invariant).
+    private let morphContainer = AppearanceTrackingView()
+    /// The badge's glass (2.10.1): black in dark mode, white in light mode (blending stays .withinWindow per invariant).
     private let glassView = NSVisualEffectView()
+    /// The badge's still edge light, softer here. Sized to the final panel and pinned top-left like the content, so it
+    /// is drawn once per size and the morph just reveals it.
+    private let bevel = BevelView()
     /// Header + grid, laid out at the final size and pinned top-left so nothing re-lays out mid-morph.
     private let contentContainer = NSView()
     private let titleLabel = NSTextField(labelWithString: "Que")
@@ -81,11 +84,18 @@ public final class DeckPreviewPanel: NSPanel {
         morphContainer.layer?.cornerRadius = Self.cornerRadius
         contentView = morphContainer
 
-        glassView.material = .popover
         glassView.blendingMode = .withinWindow
         glassView.state = .active
         glassView.autoresizingMask = [.width, .height]
         morphContainer.addSubview(glassView)
+
+        bevel.cornerRadius = Self.cornerRadius
+        bevel.light = CGVector(dx: 1, dy: -1)   // still light on the top-left and bottom-right edges (wider than the badge's so it shows on straight edges)
+        bevel.autoresizingMask = [.maxXMargin, .minYMargin]
+        morphContainer.addSubview(bevel)
+        morphContainer.layer?.borderWidth = 1
+        morphContainer.onAppearanceChange = { [weak self] in self?.applyLook() }
+        applyLook()
 
         contentContainer.autoresizingMask = [.maxXMargin, .minYMargin]   // pinned top-left while the panel morphs
         morphContainer.addSubview(contentContainer)
@@ -127,6 +137,17 @@ public final class DeckPreviewPanel: NSPanel {
     public override var canBecomeKey: Bool { return false }
     public override var canBecomeMain: Bool { return false }
 
+    private func applyLook() {
+        let dark = morphContainer.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) != .aqua
+        glassView.material = dark ? .hudWindow : .popover
+        glassView.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        morphContainer.layer?.backgroundColor = DeckHUDView.glassTint(dark: dark).cgColor
+        morphContainer.layer?.borderColor = DeckHUDView.glassHairline(dark: dark).withAlphaComponent(0.06).cgColor
+        bevel.isDark = dark
+        bevel.strength = dark ? 0.5 : 1   // the badge's full light looked too strong on a panel this size
+        bevel.needsDisplay = true
+    }
+
     public override func sendEvent(_ event: NSEvent) {
         // ⌥-click closes the preview, except on a thumbnail or a header button: ⌥ is often still held from the
         // ⌥-click that opened it, and selecting/dragging/removing shouldn't require letting go first.
@@ -158,17 +179,47 @@ public final class DeckPreviewPanel: NSPanel {
 
     /// 3–5 columns (narrow decks don't get a header squeezed into one column), up to 4½ rows visible
     /// before the grid scrolls (the half row signals it), exactly like the board picker.
-    private func layout(for count: Int) -> Layout {
+    private static func isGIF(_ item: DeckItem) -> Bool { item.fileURL.pathExtension.lowercased() == "gif" }
+    private static let sectionHeaderHeight: CGFloat = 22
+    private static let sectionGap: CGFloat = 12
+
+    /// Images first, then GIFs (deck order inside each). Headers only when both kinds are present.
+    private func sections(of items: [DeckItem]) -> (groups: [(title: String, items: [(deckIndex: Int, item: DeckItem)])], showHeaders: Bool) {
+        let entries = items.enumerated().map { (deckIndex: $0.offset, item: $0.element) }
+        let images = entries.filter { !Self.isGIF($0.item) }
+        let gifs = entries.filter { Self.isGIF($0.item) }
+        let groups = [("Images", images), ("GIFs", gifs)].filter { !$0.1.isEmpty }
+        return (groups, groups.count > 1)
+    }
+
+    private func layout(for items: [DeckItem]) -> Layout {
+        let count = items.count
         let columns = min(max(count, 3), Self.maxColumns)
-        let rows = max(1, Int(ceil(Double(count) / Double(columns))))
+        let (groups, showHeaders) = sections(of: items)
+        let rowCounts = groups.map { max(1, Int(ceil(Double($0.items.count) / Double(columns)))) }
+        let rows = rowCounts.reduce(0, +)
         let scrolls = rows > 4
+        let extras = showHeaders ? CGFloat(groups.count) * Self.sectionHeaderHeight + CGFloat(groups.count - 1) * Self.sectionGap : 0
         let visibleRows: CGFloat = scrolls ? 4.5 : CGFloat(rows)
-        let gridHeight = visibleRows * Self.tile + (ceil(visibleRows) - 1) * Self.gap + Self.inset * 2
+        let gridHeight = visibleRows * Self.tile + (ceil(visibleRows) - 1) * Self.gap + Self.inset * 2 + extras
         // Overlay scroll bars float over the grid's 16pt margin, so no width is reserved for them.
         let width = CGFloat(columns) * Self.tile + CGFloat(columns - 1) * Self.gap + Self.inset * 2
         let height = Self.headerHeight + 1 + gridHeight
         return Layout(columns: columns, rows: rows, size: NSSize(width: width, height: height),
                       gridHeight: gridHeight, scrolls: scrolls)
+    }
+
+    /// Height of the whole scrolling document for `items` (sections, headers, gaps), so the grid view can match it.
+    private func documentHeight(for items: [DeckItem], columns: Int) -> CGFloat {
+        let (groups, showHeaders) = sections(of: items)
+        var h = Self.inset
+        for (i, group) in groups.enumerated() {
+            let rows = max(1, Int(ceil(Double(group.items.count) / Double(columns))))
+            if showHeaders { h += Self.sectionHeaderHeight }
+            h += CGFloat(rows) * Self.tile + CGFloat(rows - 1) * Self.gap
+            if i < groups.count - 1 { h += Self.sectionGap }
+        }
+        return h + Self.inset
     }
 
     private func visibleBounds(containing point: NSPoint) -> NSRect {
@@ -204,7 +255,7 @@ public final class DeckPreviewPanel: NSPanel {
         for cell in cells { cell.isSelected = ids.contains(cell.item.id) }
         if ids.isEmpty { lastClickedIndex = nil }
         updateHeaderControls()
-        if let qm = queueManager, !qm.isEmpty { layoutContent(layout(for: qm.count)) }
+        if let qm = queueManager, !qm.isEmpty { layoutContent(layout(for: qm.items)) }
     }
 
     private func cellClicked(_ cell: PreviewThumbnailCell, index: Int, modifiers: NSEvent.ModifierFlags) {
@@ -222,7 +273,12 @@ public final class DeckPreviewPanel: NSPanel {
 
     /// Cells that travel together when `cell` is dragged: the whole selection if it's part of it, else just it.
     private func dragGroup(for cell: PreviewThumbnailCell) -> [PreviewThumbnailCell] {
-        cell.isSelected ? cells.filter { $0.isSelected } : [cell]
+        // Deck order (the order things joined Que), whatever section they sit in on screen.
+        let order = queueManager?.items.map { $0.id } ?? []
+        let selected = cells.filter { $0.isSelected }.sorted {
+            (order.firstIndex(of: $0.item.id) ?? 0) < (order.firstIndex(of: $1.item.id) ?? 0)
+        }
+        return cell.isSelected ? selected : [cell]
     }
 
     @objc private func selectAllClicked() {
@@ -279,28 +335,57 @@ public final class DeckPreviewPanel: NSPanel {
 
         // Fixed 72pt tiles; the overlay scroll bar floats in the right margin rather than taking width.
         let tile = Self.tile
-        let docHeight = CGFloat(layout.rows) * tile + CGFloat(layout.rows - 1) * Self.gap + Self.inset * 2
+        let docHeight = documentHeight(for: items, columns: layout.columns)
         let gridWidth = CGFloat(layout.columns) * tile + CGFloat(layout.columns - 1) * Self.gap + Self.inset * 2
         gridView.frame = NSRect(x: 0, y: 0, width: gridWidth, height: max(docHeight, layout.gridHeight))
 
-        for (index, item) in items.enumerated() {
-            let col = index % layout.columns, row = index / layout.columns
+        let (groups, showHeaders) = sections(of: items)
+        var y = Self.inset
+        var index = 0   // position on screen (selection ranges follow it); deck order still rules drag-out
+        for (g, group) in groups.enumerated() {
+            if showHeaders {
+                gridView.addSubview(sectionHeader(group.title, count: group.items.count,
+                                                  frame: NSRect(x: Self.inset, y: y, width: gridWidth - Self.inset * 2, height: Self.sectionHeaderHeight)))
+                y += Self.sectionHeaderHeight
+            }
+            for (n, entry) in group.items.enumerated() {
+            let item = entry.item
+            let col = n % layout.columns, row = n / layout.columns
             let cell = PreviewThumbnailCell(
-                item: item, position: index + 1, total: count,
+                item: item, position: entry.deckIndex + 1, total: count,
                 frame: NSRect(x: Self.inset + CGFloat(col) * (tile + Self.gap),
-                              y: Self.inset + CGFloat(row) * (tile + Self.gap),   // flipped: row 0 at the top
+                              y: y + CGFloat(row) * (tile + Self.gap),   // flipped: row 0 at the top
                               width: tile, height: tile)
             )
+            let shownIndex = index
             // Deleting only mutates the queue; the queue observer calls refresh() once.
             cell.onDelete = { [weak self] deleted in self?.queueManager?.remove(id: deleted.id) }
             cell.onDragOut = { [weak self] dragging in self?.isDraggingOut = dragging }
-            cell.onClick = { [weak self] clicked, modifiers in self?.cellClicked(clicked, index: index, modifiers: modifiers) }
+            cell.onClick = { [weak self] clicked, modifiers in self?.cellClicked(clicked, index: shownIndex, modifiers: modifiers) }
             cell.dragGroup = { [weak self] dragged in self?.dragGroup(for: dragged) ?? [dragged] }
             cell.onEdit = { [weak self] edited in self?.openEditor(for: edited) }
             cell.isSelected = selectedIDs.contains(item.id)
             cells.append(cell)
             gridView.addSubview(cell)
+            index += 1
+            }
+            let rows = max(1, Int(ceil(Double(group.items.count) / Double(layout.columns))))
+            y += CGFloat(rows) * tile + CGFloat(rows - 1) * Self.gap + (g < groups.count - 1 ? Self.sectionGap : 0)
         }
+    }
+
+    /// "Images 12" / "GIFs 4": a quiet title and a fainter count (no extra chrome).
+    private func sectionHeader(_ title: String, count: Int, frame: NSRect) -> NSTextField {
+        let text = NSMutableAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .semibold),
+            .foregroundColor: NSColor.secondaryLabelColor])
+        text.append(NSAttributedString(string: "  \(count)", attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .regular),
+            .foregroundColor: NSColor.tertiaryLabelColor]))
+        let label = NSTextField(labelWithAttributedString: text)
+        label.frame = frame
+        label.setAccessibilityRole(.staticText)
+        return label
     }
 
     // MARK: - Open / Morph / Refresh / Close
@@ -316,7 +401,7 @@ public final class DeckPreviewPanel: NSPanel {
         selectedIDs = []   // each opening starts with nothing selected
         lastClickedIndex = nil
 
-        let layout = self.layout(for: queueManager.count)
+        let layout = self.layout(for: queueManager.items)
         let targetSize = layout.size
         let bounds = visibleBounds(containing: NSPoint(x: sourceRect.midX, y: sourceRect.midY))
 
@@ -334,6 +419,7 @@ public final class DeckPreviewPanel: NSPanel {
         glassView.frame = morphContainer.bounds
         contentContainer.frame = NSRect(x: 0, y: start.height - targetSize.height,
                                         width: targetSize.width, height: targetSize.height)
+        bevel.frame = contentContainer.frame
         layoutContent(layout)
         rebuildGrid(layout)
         scrollView.contentView.scroll(to: .zero)
@@ -371,12 +457,13 @@ public final class DeckPreviewPanel: NSPanel {
             return
         }
 
-        let layout = self.layout(for: qm.count)
+        let layout = self.layout(for: qm.items)
         let size = layout.size
         let targetFrame = anchoredFrame(for: size)
 
         // Top-aligned against the current height; autoresizing lands it at y = 0 when the resize finishes.
         contentContainer.frame = NSRect(x: 0, y: frame.height - size.height, width: size.width, height: size.height)
+        bevel.frame = contentContainer.frame
         layoutContent(layout)
         rebuildGrid(layout)
 
@@ -465,7 +552,7 @@ public final class DeckPreviewPanel: NSPanel {
         self.editor = nil
         editor.tearDown()
         guard let qm = queueManager, !qm.isEmpty else { editor.removeFromSuperview(); close(); return }
-        let layout = self.layout(for: qm.count)
+        let layout = self.layout(for: qm.items)
         contentContainer.frame = NSRect(x: 0, y: frame.height - layout.size.height,
                                         width: layout.size.width, height: layout.size.height)
         layoutContent(layout)
@@ -478,6 +565,7 @@ public final class DeckPreviewPanel: NSPanel {
     /// Cross-fades two states while the panel resizes. A new morph takes over from wherever the last one was.
     private func morph(to target: NSRect, showing: NSView, hiding: NSView, completion: (() -> Void)? = nil) {
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        bevel.frame = NSRect(x: 0, y: frame.height - target.height, width: target.width, height: target.height)
         if reduceMotion { setFrame(target, display: true) }
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = reduceMotion ? 0.15 : 0.24
@@ -866,5 +954,14 @@ final class PreviewThumbnailCell: NSView, NSDraggingSource {
             deleteButton.animator().alphaValue = 0.0
             editButton?.animator().alphaValue = 0.0
         }
+    }
+}
+
+/// Reports system light/dark switches (the preview's root view, so the glass can follow them).
+final class AppearanceTrackingView: NSView {
+    var onAppearanceChange: (() -> Void)?
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        onAppearanceChange?()
     }
 }

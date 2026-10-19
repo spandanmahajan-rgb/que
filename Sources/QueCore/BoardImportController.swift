@@ -65,13 +65,18 @@ public final class BoardPickerModel: ObservableObject {
 
     // MARK: Selection
 
-    /// Click toggles one pin; Shift-click applies that pin's new state to the whole range from the last click.
+    /// Pins in the order the picker shows them: images first, then video pins (which join Que as GIFs).
+    public var displayPins: [PinterestBoardPin] { pins.filter { !$0.isVideo } + pins.filter { $0.isVideo } }
+
+    /// Click toggles one pin; Shift-click applies that pin's new state to the whole range from the last click
+    /// (in the order shown on screen).
     public func toggle(_ pin: PinterestBoardPin, extendingRange: Bool = false) {
-        guard let index = pins.firstIndex(of: pin) else { return }
+        let shown = displayPins
+        guard let index = shown.firstIndex(of: pin) else { return }
         let select = !selection.contains(pin.id)
-        if extendingRange, let anchor = anchorIndex {
+        if extendingRange, let anchor = anchorIndex, anchor < shown.count {
             for i in min(anchor, index)...max(anchor, index) {
-                if select { selection.insert(pins[i].id) } else { selection.remove(pins[i].id) }
+                if select { selection.insert(shown[i].id) } else { selection.remove(shown[i].id) }
             }
         } else if select {
             selection.insert(pin.id)

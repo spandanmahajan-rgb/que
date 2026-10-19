@@ -21,8 +21,11 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     private static let darkTint = NSColor(red: 0.04, green: 0.04, blue: 0.05, alpha: 0.55)
     private static let lightTint = NSColor(white: 1.0, alpha: 0.62)
     private var isDarkLook = true
-    private var tint: NSColor { isDarkLook ? Self.darkTint : Self.lightTint }
-    private var hairline: NSColor { isDarkLook ? NSColor(white: 1, alpha: 0.10) : NSColor(white: 0, alpha: 0.08) }
+    private var tint: NSColor { Self.glassTint(dark: isDarkLook) }
+    private var hairline: NSColor { Self.glassHairline(dark: isDarkLook) }
+    /// Shared with the preview grid, which wears the same glass.
+    static func glassTint(dark: Bool) -> NSColor { dark ? darkTint : lightTint }
+    static func glassHairline(dark: Bool) -> NSColor { dark ? NSColor(white: 1, alpha: 0.10) : NSColor(white: 0, alpha: 0.08) }
     private var inkColor: NSColor { isDarkLook ? .white : NSColor(white: 0.08, alpha: 1) }
     /// Edge light: a crescent that sits on the side facing one fixed lamp above the screen (see `syncLight`).
     private let bevel = BevelView()
@@ -840,10 +843,13 @@ public final class DeckHUDView: NSView, NSDraggingSource {
 
 /// The edge light, drawn as inset shadows clipped to the capsule: a bright crescent on the side that faces the lamp
 /// (thick in the middle, tapering to points), a dimmer one opposite, and a soft inner glow so the surface rounds over.
-/// `light` points from the lamp to the pill (screen coordinates, y up).
+/// `light` points from the lamp to the pill (screen coordinates, y up). Also rims the preview grid, with a corner
+/// radius instead of a capsule and a weaker light in dark mode.
 final class BevelView: NSView {
     var light = CGVector(dx: 0, dy: -1)
     var isDark = true
+    var cornerRadius: CGFloat?      // nil = capsule
+    var strength: CGFloat = 1       // scales every highlight's opacity
 
     override var isFlipped: Bool { false }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -851,7 +857,7 @@ final class BevelView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext, bounds.height > 1 else { return }
         let r = bounds
-        let radius = r.height / 2
+        let radius = min(cornerRadius ?? r.height / 2, r.height / 2)
         ctx.addPath(CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil))
         ctx.clip()
         let lx = light.dx, ly = light.dy
@@ -861,7 +867,8 @@ final class BevelView: NSView {
             path.addRect(r.insetBy(dx: -80, dy: -80))
             path.addPath(hole)
             ctx.saveGState()
-            ctx.setShadow(offset: CGSize(width: lx * k, height: ly * k), blur: blur, color: color.cgColor)
+            ctx.setShadow(offset: CGSize(width: lx * k, height: ly * k), blur: blur,
+                          color: color.withAlphaComponent(color.alphaComponent * strength).cgColor)
             ctx.setFillColor(NSColor.black.cgColor)
             ctx.addPath(path)
             ctx.fillPath(using: .evenOdd)

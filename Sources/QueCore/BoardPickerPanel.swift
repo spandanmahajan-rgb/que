@@ -16,7 +16,10 @@ final class BoardPickerPanel: NSPanel {
     private var clickOutsideMonitor: Any?
     private var isClosing = false
     /// Clips the (fixed-size) SwiftUI content while the panel morphs to and from the pill.
-    private let morphContainer = NSView()
+    private let morphContainer = AppearanceTrackingView()
+    /// The badge's glass and still edge light (2.10.1), same as the preview grid; the SwiftUI content sits clear on top.
+    private let glassView = NSVisualEffectView()
+    private let bevel = BevelView()
     private var hostingView: NSHostingView<BoardPickerView>!
     /// Where to collapse to on close: the pill's frame, or nil when no pill is showing (then shrink to a dot).
     var collapseTarget: (() -> NSRect?)?
@@ -53,8 +56,30 @@ final class BoardPickerPanel: NSPanel {
         morphContainer.wantsLayer = true
         morphContainer.layer?.masksToBounds = true
         morphContainer.layer?.cornerCurve = .continuous
+        glassView.blendingMode = .withinWindow
+        glassView.state = .active
+        glassView.autoresizingMask = [.width, .height]
+        morphContainer.addSubview(glassView)
+        bevel.cornerRadius = 14
+        bevel.light = CGVector(dx: 1, dy: -1)   // top-left and bottom-right edges, like the badge and preview
+        bevel.autoresizingMask = [.maxXMargin, .minYMargin]
+        morphContainer.addSubview(bevel)
         morphContainer.addSubview(hostingView)
+        morphContainer.layer?.borderWidth = 1
+        morphContainer.onAppearanceChange = { [weak self] in self?.applyLook() }
+        applyLook()
         contentView = morphContainer
+    }
+
+    private func applyLook() {
+        let dark = morphContainer.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) != .aqua
+        glassView.material = dark ? .hudWindow : .popover
+        glassView.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        morphContainer.layer?.backgroundColor = DeckHUDView.glassTint(dark: dark).cgColor
+        morphContainer.layer?.borderColor = DeckHUDView.glassHairline(dark: dark).withAlphaComponent(0.06).cgColor
+        bevel.isDark = dark
+        bevel.strength = dark ? 0.5 : 1
+        bevel.needsDisplay = true
     }
 
     override var canBecomeKey: Bool { true }
@@ -93,6 +118,7 @@ final class BoardPickerPanel: NSPanel {
         let start = reduceMotion ? finalFrame : anchor
         setFrame(start, display: false)
         hostingView.setFrameOrigin(NSPoint(x: 0, y: start.height - size.height))
+        bevel.frame = hostingView.frame
         morphContainer.layer?.cornerRadius = reduceMotion ? 14 : min(start.height / 2, 14)
         hostingView.alphaValue = reduceMotion ? 1 : 0
         alphaValue = reduceMotion ? 0 : 1
@@ -169,16 +195,14 @@ struct BoardPickerView: View {
             header
             Divider()
             ScrollView {
-                // Flexible columns keep the tiles square at whatever width the grid gets.
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: BoardPickerPanel.gap),
-                                         count: BoardPickerPanel.columns),
-                          spacing: BoardPickerPanel.gap) {
-                    ForEach(Array(model.pins.enumerated()), id: \.element.id) { index, pin in
-                        PinTile(pin: pin, position: index + 1, isSelected: model.selection.contains(pin.id),
-                                isInDeck: model.pinsInDeck.contains(pin.id)) {
-                            model.toggle(pin, extendingRange: NSEvent.modifierFlags.contains(.shift))
-                        }
-                    }
+                // Images, then GIFs (video pins). Headers only when both kinds are present.
+                VStack(alignment: .leading, spacing: 0) {
+                    let images = model.pins.filter { !$0.isVideo }
+                    let gifs = model.pins.filter { $0.isVideo }
+                    let showHeaders = !images.isEmpty && !gifs.isEmpty
+                    pinSection("Images", images, offset: 0, showHeader: showHeaders)
+                    pinSection("GIFs", gifs, offset: images.count, showHeader: showHeaders)
+                        .padding(.top, showHeaders && !gifs.isEmpty ? 14 : 0)
                 }
                 .padding(BoardPickerPanel.inset)
                 .background(OverlayScrollerStyle())   // thin floating scroll bar, no track taking width
@@ -201,8 +225,32 @@ struct BoardPickerView: View {
             footer
         }
         .frame(width: BoardPickerPanel.width)
-        .background(PopoverMaterialBackground())
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func pinSection(_ title: String, _ pins: [PinterestBoardPin], offset: Int, showHeader: Bool) -> some View {
+        if !pins.isEmpty {
+            if showHeader {
+                HStack(spacing: 6) {
+                    Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                    Text("\(pins.count)").font(.subheadline).monospacedDigit().foregroundStyle(.tertiary)
+                }
+                .padding(.bottom, 6)
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isHeader)
+            }
+            // Flexible columns keep the tiles square at whatever width the grid gets.
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: BoardPickerPanel.gap),
+                                     count: BoardPickerPanel.columns),
+                      spacing: BoardPickerPanel.gap) {
+                ForEach(Array(pins.enumerated()), id: \.element.id) { index, pin in
+                    PinTile(pin: pin, position: offset + index + 1, isSelected: model.selection.contains(pin.id),
+                            isInDeck: model.pinsInDeck.contains(pin.id)) {
+                        model.toggle(pin, extendingRange: NSEvent.modifierFlags.contains(.shift))
+                    }
+                }
+            }
+        }
     }
 
     private var header: some View {

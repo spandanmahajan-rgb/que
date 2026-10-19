@@ -324,6 +324,18 @@ func testBoardPickerSelection() {
     assert(!model.hasMore, "No bookmark means the board is fully loaded")
     model.selectAll()
     assert(model.selectedPins.map(\.id) == (1...7).map(String.init), "Select All keeps board order")
+    // Sections: images first, then video pins (GIFs); Shift-click ranges follow that on-screen order.
+    func video(_ n: Int) -> PinterestBoardPin {
+        let u = URL(string: "https://i.pinimg.com/236x/\(n).jpg")!
+        return PinterestBoardPin(id: "v\(n)", title: nil, thumbnailURL: u, imageURL: u, videoURL: URL(string: "https://v.pinimg.com/\(n).mp4"), dominantColor: nil)
+    }
+    let mixed = BoardPickerModel(board: board)
+    mixed.appendPage([pin(1), video(2), pin(3), video(4)], nextBookmark: nil)
+    assert(mixed.displayPins.map(\.id) == ["1", "3", "v2", "v4"], "Images first, then GIFs, got \(mixed.displayPins.map(\.id))")
+    mixed.selectNone()
+    mixed.toggle(pin(3))
+    mixed.toggle(video(2), extendingRange: true)
+    assert(mixed.selection == ["3", "v2"], "Range follows on-screen order, got \(mixed.selection.sorted())")
     model.setPinsInDeck(["3", "6"])
     assert(!model.selection.contains("3") && !model.selection.contains("6"), "Pins already in the deck start unselected")
     model.toggle(pin(3))

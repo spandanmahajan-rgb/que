@@ -46,7 +46,7 @@ Designers, researchers, and creators gathering visual references suffer from con
 | **Drop Anywhere** | `⌥ + Drag`, or tap `⌃` twice then drag | Hold `⌥` (or tap `⌃` twice, if chosen) to snap Que to the mouse, drag it onto Google Slides, Keynote, Figma or a chat like WhatsApp, and let go (no need to release `⌥` first). Everything lands at once. `⌘` no longer moves Que (since v2.5), so `⌘`-click in browsers and design apps never lands on it. While you select text or drag something else, Que keeps following the pointer instead of freezing in place. |
 | **Copy All** | Control Center or right-click menu | Puts every image in Que on the clipboard for pasting. (The `⌘ + Click` gesture for this was removed in v2.5: `⌥ + Drag` drops into chats directly.) |
 | **Edit GIF** | Hover a GIF in the Preview Grid, click the pencil | The preview expands into a small editor with the whole source video as a filmstrip. Drag the edges, or the highlighted part, to choose another 0.5 to 8 seconds, check it in the loop, then Update GIF swaps it in place (same spot, nothing duplicated). Cancel or a failure keeps the original. Que keeps the downloaded video next to its GIF until the GIF leaves Que. |
-| **Preview Grid** | `⌥ + Click`, or tap `⌃` twice then click | Unfurls a floating frosted glass grid displaying all accumulated thumbnails with individual `✕` delete buttons. Click thumbnails to select several (⇧-click for a range, Select All in the header), then drag them out together or remove them with the trash button; dragged images stay in Que. Holding `⌥` from the opening click still selects. Dismisses on `⌥ + Click` outside the thumbnails, clicking outside, or moving the cursor away (Esc can't reach it: the grid never takes keyboard focus). |
+| **Preview Grid** | `⌥ + Click`, or tap `⌃` twice then click | Unfurls a floating glass grid (black in dark mode, white in light mode) displaying all accumulated thumbnails, with images and GIFs in their own sections with individual `✕` delete buttons. Click thumbnails to select several (⇧-click for a range, Select All in the header), then drag them out together or remove them with the trash button; dragged images stay in Que. Holding `⌥` from the opening click still selects. Dismisses on `⌥ + Click` outside the thumbnails, clicking outside, or moving the cursor away (Esc can't reach it: the grid never takes keyboard focus). |
 | **Shake to Clear** | Rapid cursor wiggle | Vigorously shaking the mouse back and forth clears Que with a dissolve animation. |
 | **Control Center** | Click Menu Bar Icon | Opens as a native macOS menu (256×372 pt), so the menu bar icon stays highlighted while it's open, like Battery or Wi-Fi. Switches (Que on/off, Smart Filter, Screenshots, Shake to Clear, Launch at Login), actions (Copy All, how Que is called over: "⌥ Hold" or "⌃⌃ Tap", blue while active, click to switch; Clear), then four menu-style rows: How to Use, Check for Updates, Report a Problem and Quit. |
 | **Scroll passes through** | Scroll while Que is under the pointer | Scrolling (e.g. ⌥ + scroll to zoom in Illustrator, Figma, Maps) goes to the app underneath: Que becomes click-through until the wheel is quiet for 0.35 s. The first tick is lost. |
@@ -162,7 +162,7 @@ Sources/
 │   ├── DeckItem.swift                 # Data model (UUID, file URL, thumbnail, timestamp, dimensions)
 │   ├── CursorHUDPanel.swift           # 60fps cursor-following NSPanel, displayLink sync
 │   ├── DeckHUDView.swift              # Glass pill UI (black in dark mode, white in light mode, edge light), drag source coordinator, gestures
-│   ├── DeckPreviewPanel.swift         # Frosted glass grid preview window (thumbnails, delete buttons)
+│   ├── DeckPreviewPanel.swift         # Glass grid preview window (images and GIFs sections, thumbnails, delete buttons)
 │   ├── PasteboardWriter.swift         # Arms clipboard for multi-item chat paste (WhatsApp, Slack)
 │   ├── ClipboardWatcher.swift         # 80ms pasteboard poller with Async Retry Ladder & Smart Filter
 │   ├── ScreenshotWatcher.swift        # DispatchSource kernel watcher on ~/Desktop for screenshots
@@ -218,7 +218,7 @@ The entire build, codesigning, packaging, git tagging, and GitHub release is aut
 
 ## 7. Current Project State & Ongoing Discussions
 
-* **Current Released Version**: **v2.10.0**
+* **Current Released Version**: **v2.11.0**
 * **Repository**: `spandanmahajan-rgb/que` (renamed from `cursor-deck`; GitHub redirects the old address)
 * **Under Discussion**: nothing open right now.
 
