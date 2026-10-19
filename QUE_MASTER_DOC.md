@@ -161,7 +161,7 @@ Sources/
 │   ├── DeckQueueManager.swift         # In-memory item store + disk cache ($TMPDIR/que/)
 │   ├── DeckItem.swift                 # Data model (UUID, file URL, thumbnail, timestamp, dimensions)
 │   ├── CursorHUDPanel.swift           # 60fps cursor-following NSPanel, displayLink sync
-│   ├── DeckHUDView.swift              # Frosted glass pill UI, drag source coordinator, gestures
+│   ├── DeckHUDView.swift              # Glass pill UI (black in dark mode, white in light mode, edge light), drag source coordinator, gestures
 │   ├── DeckPreviewPanel.swift         # Frosted glass grid preview window (thumbnails, delete buttons)
 │   ├── PasteboardWriter.swift         # Arms clipboard for multi-item chat paste (WhatsApp, Slack)
 │   ├── ClipboardWatcher.swift         # 80ms pasteboard poller with Async Retry Ladder & Smart Filter
@@ -218,7 +218,7 @@ The entire build, codesigning, packaging, git tagging, and GitHub release is aut
 
 ## 7. Current Project State & Ongoing Discussions
 
-* **Current Released Version**: **v2.9.4**
+* **Current Released Version**: **v2.10.0**
 * **Repository**: `spandanmahajan-rgb/que` (renamed from `cursor-deck`; GitHub redirects the old address)
 * **Under Discussion**: nothing open right now.
 

@@ -16,9 +16,16 @@ public protocol DeckHUDViewDelegate: AnyObject {
 public final class DeckHUDView: NSView, NSDraggingSource {
     public weak var delegate: DeckHUDViewDelegate?
 
-    /// Dark tint layered over the HUD blur. Was 52%, which hid most of the frosting; 22% keeps the white count legible
-    /// (the .hudWindow material underneath is always dark) while letting the glass read like a native HUD.
-    private static let glassTint = NSColor(red: 0.10, green: 0.10, blue: 0.12, alpha: 0.22)
+    /// Tint layered over the blur: near-black glass in dark mode, white glass in light mode (the pill follows the
+    /// system appearance, 2.10.0). `isDarkLook` is set by `applyLook`.
+    private static let darkTint = NSColor(red: 0.04, green: 0.04, blue: 0.05, alpha: 0.55)
+    private static let lightTint = NSColor(white: 1.0, alpha: 0.62)
+    private var isDarkLook = true
+    private var tint: NSColor { isDarkLook ? Self.darkTint : Self.lightTint }
+    private var hairline: NSColor { isDarkLook ? NSColor(white: 1, alpha: 0.10) : NSColor(white: 0, alpha: 0.08) }
+    private var inkColor: NSColor { isDarkLook ? .white : NSColor(white: 0.08, alpha: 1) }
+    /// Edge light: a crescent that sits on the side facing one fixed lamp above the screen (see `syncLight`).
+    private let bevel = BevelView()
     public var queueManager: DeckQueueManager?
 
     // Native Liquid Glass Visual Effect View
@@ -78,17 +85,15 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         visualEffectView.autoresizingMask = [.width, .height]
         visualEffectView.frame = bounds
         addSubview(visualEffectView, positioned: .below, relativeTo: nil)
+        bevel.frame = bounds
+        bevel.autoresizingMask = [.width, .height]
+        addSubview(bevel, positioned: .above, relativeTo: visualEffectView)
 
         // 2. Specular glass rim border and dark glass tint
-        layer?.backgroundColor = Self.glassTint.cgColor
-        layer?.borderColor = NSColor(white: 1.0, alpha: 0.28).cgColor
         layer?.borderWidth = 1.0
 
         // 3. Ambient glass drop shadow matching exact capsule curve
-        layer?.shadowColor = NSColor.black.cgColor
-        layer?.shadowOpacity = 0.38
-        layer?.shadowOffset = CGSize(width: 0, height: -2)
-        layer?.shadowRadius = 8
+        layer?.shadowRadius = 7
 
         // 4. Emerald active dot
         dotView.wantsLayer = true
@@ -103,7 +108,7 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         countLabel.drawsBackground = false
         countLabel.isEditable = false
         countLabel.isSelectable = false
-        countLabel.textColor = .white
+        countLabel.textColor = .white   // applyLook sets the real colour
         countLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .bold)
         countLabel.alignment = .center
         countLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -143,9 +148,9 @@ public final class DeckHUDView: NSView, NSDraggingSource {
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
         noticeMessageLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        noticeMessageLabel.textColor = .white
+        noticeMessageLabel.textColor = .white   // applyLook
         noticeDetailLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
-        noticeDetailLabel.textColor = NSColor(white: 1.0, alpha: 0.72)
+        noticeDetailLabel.textColor = NSColor(white: 1.0, alpha: 0.72)   // applyLook
         noticeStack.orientation = .vertical
         noticeStack.alignment = .leading
         noticeStack.spacing = 1
@@ -174,9 +179,106 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         setAccessibilityLabel("Que")
         setAccessibilityValue("0 items")
         setAccessibilityHelp("Press to copy everything in Que. \(QueControls.usesDoubleTap ? "Tap the Control key twice, then click" : "Hold the Option key and click") to see what's inside.")
-        for subview in [dotView, countLabel, noticeClipView, noticeStack, noticeMessageLabel, noticeDetailLabel] {
+        for subview in [dotView, countLabel, noticeClipView, noticeStack, noticeMessageLabel, noticeDetailLabel, bevel] {
             subview.setAccessibilityElement(false)
         }
+        applyLook(animated: false)
+    }
+
+    // MARK: - Look and light
+
+    public override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyLook(animated: true)
+    }
+
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        lastCenter = nil
+        syncLight()
+    }
+
+    /// Black glass in dark mode, white glass in light mode, cross-faded over 0.25 s when the system switches.
+    private func applyLook(animated: Bool) {
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) != .aqua
+        guard !animated || dark != isDarkLook else { return }
+        isDarkLook = dark
+        if animated, let layer = layer {
+            for key in ["backgroundColor", "borderColor"] {
+                let fade = CABasicAnimation(keyPath: key)
+                fade.fromValue = layer.presentation()?.value(forKeyPath: key) ?? layer.value(forKeyPath: key)
+                fade.duration = 0.25
+                layer.add(fade, forKey: "look-" + key)
+            }
+            let transition = CATransition()
+            transition.type = .fade
+            transition.duration = 0.25
+            bevel.layer?.add(transition, forKey: "lookFade")
+            countLabel.layer?.add(transition, forKey: "lookFade")
+        }
+        layer?.backgroundColor = tint.cgColor
+        layer?.borderColor = hairline.cgColor
+        layer?.shadowColor = (dark ? NSColor.black : NSColor(red: 0.08, green: 0.08, blue: 0.16, alpha: 1)).cgColor
+        layer?.shadowOpacity = dark ? 0.45 : 0.30
+        visualEffectView.material = dark ? .hudWindow : .popover
+        visualEffectView.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        countLabel.textColor = inkColor
+        noticeMessageLabel.textColor = inkColor
+        noticeDetailLabel.textColor = inkColor.withAlphaComponent(dark ? 0.72 : 0.62)
+        if activeNotice == nil { dotView.layer?.backgroundColor = idleDotColor.cgColor }
+        bevel.isDark = dark
+        bevel.needsDisplay = true
+        syncLight()
+    }
+
+    private var lastCenter: CGPoint?
+    private var travel = CGVector.zero      // smoothed movement per tick: the highlight lags behind it a little
+    private var light = CGVector(dx: 0, dy: -1)
+
+    /// Light mode only (dark mode keeps a still light): one fixed lamp hangs above the top-left of the screen the pill is on. The crescent sits on the side facing
+    /// the lamp and the drop shadow falls away from it, so both change only because the pill moved (a function of
+    /// position, no animation of their own); a small lean makes the highlight trail a moving pill, then settle.
+    /// Called every tracking tick: when nothing changed it does almost nothing.
+    public func syncLight() {
+        guard let window = window else { return }
+        // Dark mode: the light stays still (top-left and bottom-right edges), so moving the pill costs no redraw.
+        if isDarkLook {
+            setLight(Self.stillLight)
+            lastCenter = nil
+            return
+        }
+        let f = window.frame
+        let center = CGPoint(x: f.midX, y: f.midY)
+        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if let last = lastCenter {
+            let step = CGVector(dx: center.x - last.x, dy: center.y - last.y)
+            travel = CGVector(dx: travel.dx * 0.75 + step.dx * 0.25, dy: travel.dy * 0.75 + step.dy * 0.25)
+        }
+        lastCenter = center
+        let screen = (window.screen ?? NSScreen.main)?.frame ?? NSRect(x: 0, y: 0, width: 1920, height: 1080)
+        let lamp = CGPoint(x: screen.minX + screen.width * 0.2, y: screen.maxY + screen.height * 0.35)
+        let d = max(hypot(center.x - lamp.x, center.y - lamp.y), 1)
+        let lean: CGFloat = reduce ? 0 : 0.05
+        let target = CGVector(dx: (center.x - lamp.x) / d - travel.dx * lean, dy: (center.y - lamp.y) / d - travel.dy * lean)
+        let ease: CGFloat = reduce ? 1 : 0.3
+        let next = CGVector(dx: light.dx + (target.dx - light.dx) * ease, dy: light.dy + (target.dy - light.dy) * ease)
+        // Redraw only when the light has moved visibly (a redraw is a blurred CoreGraphics pass; doing it on every
+        // 60 fps tick made moving the pill stutter).
+        guard abs(next.dx - light.dx) > 0.03 || abs(next.dy - light.dy) > 0.03 else { return }
+        setLight(CGVector(dx: max(-1.2, min(1.2, next.dx)), dy: max(-1.2, min(1.2, next.dy))))
+    }
+
+    private static let stillLight = CGVector(dx: 0.7, dy: -0.7)
+
+    private func setLight(_ new: CGVector) {
+        guard new != light else { return }
+        light = new
+        bevel.light = new
+        bevel.needsDisplay = true
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer?.shadowOffset = CGSize(width: new.dx * 3, height: new.dy * 3 - 2)
+        CATransaction.commit()
     }
 
     /// VoiceOver "press" does what a plain click does: arms the clipboard with the whole deck.
@@ -197,6 +299,8 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         layer?.cornerRadius = radius
         visualEffectView.layer?.cornerRadius = radius
         visualEffectView.frame = bounds
+        bevel.frame = bounds
+        bevel.needsDisplay = true
         noticeClipView.frame = bounds
         noticeClipView.layer?.cornerRadius = radius
         layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: radius, cornerHeight: radius, transform: nil)
@@ -307,11 +411,12 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     }
 
     private var idleDotColor: NSColor {
-        if isWorking { return Self.workingGrey }
+        if isWorking { return isDarkLook ? Self.workingGrey : Self.workingGreyOnLight }
         return isPaused ? .systemOrange : Self.emerald
     }
 
     private static let workingGrey = NSColor(white: 0.78, alpha: 1)
+    private static let workingGreyOnLight = NSColor(white: 0.5, alpha: 1)
 
     /// Something is on its way into Que (a GIF being made, a pin downloading): grey dot, gently bouncing.
     /// With Reduce Motion it pulses in place instead. A notice still colours the dot while it shows.
@@ -437,9 +542,9 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         // 1. Solid Shape Background Glow: glass tint illuminates with rich emerald
         let bgGlow = CAKeyframeAnimation(keyPath: "backgroundColor")
         bgGlow.values = [
-            Self.glassTint.cgColor,
+            tint.cgColor,
             NSColor(red: 0.12, green: 0.44, blue: 0.22, alpha: 0.88).cgColor, // Luminous emerald glass fill
-            Self.glassTint.cgColor
+            tint.cgColor
         ]
         bgGlow.keyTimes = [0.0, 0.30, 1.0]
         bgGlow.duration = 0.60
@@ -449,9 +554,9 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         // 2. Radiant Glass Rim Glow
         let borderGlow = CAKeyframeAnimation(keyPath: "borderColor")
         borderGlow.values = [
-            NSColor(white: 1.0, alpha: 0.28).cgColor,
+            hairline.cgColor,
             NSColor(red: 0.30, green: 0.95, blue: 0.50, alpha: 0.95).cgColor,
-            NSColor(white: 1.0, alpha: 0.28).cgColor
+            hairline.cgColor
         ]
         borderGlow.keyTimes = [0.0, 0.30, 1.0]
         borderGlow.duration = 0.60
@@ -732,3 +837,39 @@ public final class DeckHUDView: NSView, NSDraggingSource {
 
 }
 
+
+/// The edge light, drawn as inset shadows clipped to the capsule: a bright crescent on the side that faces the lamp
+/// (thick in the middle, tapering to points), a dimmer one opposite, and a soft inner glow so the surface rounds over.
+/// `light` points from the lamp to the pill (screen coordinates, y up).
+final class BevelView: NSView {
+    var light = CGVector(dx: 0, dy: -1)
+    var isDark = true
+
+    override var isFlipped: Bool { false }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext, bounds.height > 1 else { return }
+        let r = bounds
+        let radius = r.height / 2
+        ctx.addPath(CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil))
+        ctx.clip()
+        let lx = light.dx, ly = light.dy
+        func inset(_ k: CGFloat, blur: CGFloat, grow: CGFloat, _ color: NSColor) {
+            let hole = CGPath(roundedRect: r.insetBy(dx: -grow, dy: -grow), cornerWidth: radius + grow, cornerHeight: radius + grow, transform: nil)
+            let path = CGMutablePath()
+            path.addRect(r.insetBy(dx: -80, dy: -80))
+            path.addPath(hole)
+            ctx.saveGState()
+            ctx.setShadow(offset: CGSize(width: lx * k, height: ly * k), blur: blur, color: color.cgColor)
+            ctx.setFillColor(NSColor.black.cgColor)
+            ctx.addPath(path)
+            ctx.fillPath(using: .evenOdd)
+            ctx.restoreGState()
+        }
+        inset(0.7, blur: 5, grow: 2.1, NSColor(white: 1, alpha: isDark ? 0.26 : 0.9))
+        inset(-2.2, blur: isDark ? 2.1 : 2.8, grow: isDark ? 1.75 : 1.4,
+              isDark ? NSColor(white: 1, alpha: 0.5) : NSColor(red: 0.08, green: 0.08, blue: 0.16, alpha: 0.22))
+        inset(2.5, blur: 1.75, grow: 1.4, NSColor(white: 1, alpha: isDark ? 0.95 : 1))
+    }
+}

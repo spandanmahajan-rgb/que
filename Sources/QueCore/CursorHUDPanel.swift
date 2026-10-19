@@ -288,6 +288,7 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
     }
 
     private func updatePosition() {
+        defer { hudView.syncLight() }
         if scrollPassThroughUntil != nil { applyMousePassThrough() }   // restore clicks once the wheel is quiet
         pollDoubleTap()
         // Hide only when there is nothing to show (empty deck, no notice) and no drag is in flight

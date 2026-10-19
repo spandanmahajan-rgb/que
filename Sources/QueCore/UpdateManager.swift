@@ -9,7 +9,7 @@ import Foundation
 public final class UpdateManager {
     public static let shared = UpdateManager()
 
-    public static let currentVersion = "2.9.4"
+    public static let currentVersion = "2.10.0"
     public static let repoOwner = "spandanmahajan-rgb"
     public static let repoName = "que"
 
