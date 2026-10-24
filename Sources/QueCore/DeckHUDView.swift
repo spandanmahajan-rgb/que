@@ -21,6 +21,7 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     private static let darkTint = NSColor(red: 0.04, green: 0.04, blue: 0.05, alpha: 0.55)
     private static let lightTint = NSColor(white: 1.0, alpha: 0.62)
     private var isDarkLook = true
+    private var lookKey = ""   // light/dark + the two accessibility settings: applyLook re-runs when any of them changes
     private var tint: NSColor { Self.glassTint(dark: isDarkLook) }
     private var hairline: NSColor { Self.glassHairline(dark: isDarkLook) }
     /// Copy-glow peaks: a dark emerald on black glass; on white glass a pale mint, so the badge glows instead of blinking dark.
@@ -31,8 +32,17 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         isDarkLook ? NSColor(red: 0.30, green: 0.95, blue: 0.50, alpha: 0.95) : NSColor(red: 0.16, green: 0.68, blue: 0.34, alpha: 0.85)
     }
     /// Shared with the preview grid, which wears the same glass.
-    static func glassTint(dark: Bool) -> NSColor { dark ? darkTint : lightTint }
-    static func glassHairline(dark: Bool) -> NSColor { dark ? NSColor(white: 1, alpha: 0.10) : NSColor(white: 0, alpha: 0.08) }
+    static func glassTint(dark: Bool) -> NSColor {
+        if solidGlass { return dark ? NSColor(white: 0.13, alpha: 1) : NSColor(white: 0.96, alpha: 1) }
+        return dark ? darkTint : lightTint
+    }
+    static func glassHairline(dark: Bool) -> NSColor {
+        if strongEdges { return dark ? NSColor(white: 1, alpha: 0.55) : NSColor(white: 0, alpha: 0.50) }
+        return dark ? NSColor(white: 1, alpha: 0.10) : NSColor(white: 0, alpha: 0.08)
+    }
+    /// Reduce transparency: glass becomes solid. Increase contrast: the edge becomes clearly visible.
+    static var solidGlass: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency }
+    static var strongEdges: Bool { NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast }
     private var inkColor: NSColor { isDarkLook ? .white : NSColor(white: 0.08, alpha: 1) }
     /// Edge light: a crescent that sits on the side facing one fixed lamp above the screen (see `syncLight`).
     private let bevel = BevelView()
@@ -193,6 +203,8 @@ public final class DeckHUDView: NSView, NSDraggingSource {
             subview.setAccessibilityElement(false)
         }
         applyLook(animated: false)
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+                                                          object: nil, queue: .main) { [weak self] _ in self?.applyLook(animated: true) }
     }
 
     // MARK: - Look and light
@@ -211,7 +223,9 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     /// Black glass in dark mode, white glass in light mode, cross-faded over 0.25 s when the system switches.
     private func applyLook(animated: Bool) {
         let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) != .aqua
-        guard !animated || dark != isDarkLook else { return }
+        let key = "\(dark)\(Self.solidGlass)\(Self.strongEdges)"
+        guard !animated || key != lookKey else { return }
+        lookKey = key
         isDarkLook = dark
         if animated, let layer = layer {
             for key in ["backgroundColor", "borderColor"] {
@@ -650,8 +664,36 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     /// True from a mouse-down on the pill until that click or drag ends (the panel holds still meanwhile).
     public private(set) var isPressed = false
 
+    /// Press response: a tiny scale-down the moment the mouse goes down, eased back on release (an alpha dip with Reduce Motion).
+    private func showPressed(_ down: Bool) {
+        guard let layer = layer else { return }
+        let curve = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+        let duration: CFTimeInterval = down ? 0.10 : 0.20
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = duration
+                context.timingFunction = curve
+                self.animator().alphaValue = down ? 0.85 : 1
+            }
+            return
+        }
+        let c = CGPoint(x: bounds.midX, y: bounds.midY)   // pivot on the centre
+        var pressed = CATransform3DMakeTranslation(c.x, c.y, 0)
+        pressed = CATransform3DScale(pressed, 0.97, 0.97, 1)
+        pressed = CATransform3DTranslate(pressed, -c.x, -c.y, 0)
+        let anim = CABasicAnimation(keyPath: "transform")
+        anim.fromValue = layer.presentation()?.transform ?? layer.transform
+        anim.toValue = down ? pressed : CATransform3DIdentity
+        anim.duration = duration
+        anim.timingFunction = curve
+        anim.fillMode = .forwards
+        anim.isRemovedOnCompletion = !down   // hold the pressed state; the release settles back to the model value
+        layer.add(anim, forKey: "press")
+    }
+
     public override func mouseDown(with event: NSEvent) {
         isPressed = true
+        showPressed(true)
         // A previous hold may still be settling; it belongs to that press, not this one.
         if longPress == .fired || longPress == .cancelled { longPress = .idle }
         if let notice = activeNotice, notice.hasActions {
@@ -693,6 +735,7 @@ public final class DeckHUDView: NSView, NSDraggingSource {
 
     public override func mouseUp(with event: NSEvent) {
         isPressed = false
+        showPressed(false)
         // If a drag session was active, AppKit handles session end via draggingSession(_:endedAt:operation:)
         guard !isDraggingSessionActive else { return }
 
@@ -850,6 +893,7 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     public func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
         isDraggingSessionActive = false
         isPressed = false
+        showPressed(false)
         if operation != [] {
             delegate?.deckHUDViewDidCompleteDrop(self)
         } else {

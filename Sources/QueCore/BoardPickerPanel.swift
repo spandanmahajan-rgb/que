@@ -67,6 +67,8 @@ final class BoardPickerPanel: NSPanel {
         morphContainer.addSubview(hostingView)
         morphContainer.layer?.borderWidth = 1
         morphContainer.onAppearanceChange = { [weak self] in self?.applyLook() }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+                                                          object: nil, queue: .main) { [weak self] _ in self?.applyLook() }
         applyLook()
         contentView = morphContainer
     }
@@ -76,7 +78,8 @@ final class BoardPickerPanel: NSPanel {
         glassView.material = dark ? .hudWindow : .popover
         glassView.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         morphContainer.layer?.backgroundColor = DeckHUDView.glassTint(dark: dark).cgColor
-        morphContainer.layer?.borderColor = DeckHUDView.glassHairline(dark: dark).withAlphaComponent(0.06).cgColor
+        let edge = DeckHUDView.glassHairline(dark: dark)
+        morphContainer.layer?.borderColor = (DeckHUDView.strongEdges ? edge : edge.withAlphaComponent(0.06)).cgColor
         bevel.isDark = dark
         bevel.strength = dark ? 0.5 : 1
         bevel.needsDisplay = true

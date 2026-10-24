@@ -18,6 +18,7 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
     private var tickScale: CGFloat = 1
     private var previousCount: Int = 0
     private var wasMagnetHeld = false
+    private var originBeforeDrag: NSPoint?   // a cancelled drag puts the badge back here instead of sweeping in from off-screen
 
     /// "Tap ⌃ twice" (see QueControls): ⌃⌃ snaps the pill under the pointer until ⌃⌃ again or a drop; ⌥ then no
     /// longer snaps, so ⌥-drag duplicates in other apps.
@@ -573,16 +574,20 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
             previewPanel.close()
         }
         isDragging = true
+        originBeforeDrag = frame.origin
         setFrameOrigin(NSPoint(x: -500, y: -500))
     }
 
     public func deckHUDViewDidCompleteDrop(_ view: DeckHUDView) {
+        originBeforeDrag = nil
         isDragging = false
         isTapSnapped = false
         queueManager.clear()
     }
 
     public func deckHUDViewDidCancelDrop(_ view: DeckHUDView) {
+        if let origin = originBeforeDrag { setFrameOrigin(origin) }
+        originBeforeDrag = nil
         isDragging = false
         refreshHUD()
     }
