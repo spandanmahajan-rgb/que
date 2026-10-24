@@ -468,8 +468,8 @@ public final class DeckPreviewPanel: NSPanel {
         rebuildGrid(layout)
 
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.15
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.duration = 0.20
+            context.timingFunction = Self.morphCurve
             self.animator().setFrame(targetFrame, display: true)
         }, completionHandler: { [weak self] in self?.invalidateShadow() })
     }
@@ -738,11 +738,33 @@ final class PreviewThumbnailCell: NSView, NSDraggingSource {
     var isSelected = false {
         didSet {
             guard isSelected != oldValue else { return }
-            checkmark.isHidden = !isSelected
+            animateCheckmark(isSelected)
             deleteButton.alphaValue = (isHovered && !isSelected) ? 1 : 0
             setAccessibilitySelected(isSelected)
             setAccessibilityValue(accessibilityStateText)
             needsDisplay = true   // border via updateLayer
+        }
+    }
+
+    /// A quick scale-and-fade so selecting feels tactile; fades only with Reduce Motion.
+    private func animateCheckmark(_ on: Bool) {
+        let curve = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+        if on, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let layer = checkmark.layer {
+            let b = checkmark.bounds
+            var t = CATransform3DMakeTranslation(b.midX, b.midY, 0)   // pivot on the centre, not the corner
+            t = CATransform3DScale(t, 0.85, 0.85, 1)
+            t = CATransform3DTranslate(t, -b.midX, -b.midY, 0)
+            let grow = CABasicAnimation(keyPath: "transform")
+            grow.fromValue = t
+            grow.toValue = CATransform3DIdentity
+            grow.duration = 0.15
+            grow.timingFunction = curve
+            layer.add(grow, forKey: "select")
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = on ? 0.15 : 0.10
+            context.timingFunction = curve
+            checkmark.animator().alphaValue = on ? 1 : 0
         }
     }
 
@@ -809,7 +831,8 @@ final class PreviewThumbnailCell: NSView, NSDraggingSource {
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
                 .applying(NSImage.SymbolConfiguration(paletteColors: [.white, .controlAccentColor])))
         checkmark.frame = NSRect(x: bounds.width - 19 - 4, y: bounds.height - 19 - 4, width: 19, height: 19)
-        checkmark.isHidden = true
+        checkmark.wantsLayer = true
+        checkmark.alphaValue = 0
         checkmark.setAccessibilityElement(false)
 
         // Remove button: same neutral dark badge style as the picker's tags (not an iOS-style red circle).

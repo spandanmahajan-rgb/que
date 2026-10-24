@@ -23,6 +23,13 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     private var isDarkLook = true
     private var tint: NSColor { Self.glassTint(dark: isDarkLook) }
     private var hairline: NSColor { Self.glassHairline(dark: isDarkLook) }
+    /// Copy-glow peaks: a dark emerald on black glass; on white glass a pale mint, so the badge glows instead of blinking dark.
+    private var glowFill: NSColor {
+        isDarkLook ? NSColor(red: 0.12, green: 0.44, blue: 0.22, alpha: 0.88) : NSColor(red: 0.80, green: 0.97, blue: 0.86, alpha: 0.80)
+    }
+    private var glowRim: NSColor {
+        isDarkLook ? NSColor(red: 0.30, green: 0.95, blue: 0.50, alpha: 0.95) : NSColor(red: 0.16, green: 0.68, blue: 0.34, alpha: 0.85)
+    }
     /// Shared with the preview grid, which wears the same glass.
     static func glassTint(dark: Bool) -> NSColor { dark ? darkTint : lightTint }
     static func glassHairline(dark: Bool) -> NSColor { dark ? NSColor(white: 1, alpha: 0.10) : NSColor(white: 0, alpha: 0.08) }
@@ -524,10 +531,14 @@ public final class DeckHUDView: NSView, NSDraggingSource {
                 noticeStack.animator().alphaValue = 0
             }
             guard restoringCount else { return }
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.18
-                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.6, 0, 1, 1)
-                countLabel.animator().alphaValue = 1
+            // The count returns once the text has mostly cleared, then comes in quickly (an ease-in here felt laggy).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) { [weak self] in
+                guard let self = self, self.activeNotice == nil else { return }   // a new message took over meanwhile
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.16
+                    context.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+                    self.countLabel.animator().alphaValue = 1
+                }
             }
         }
     }
@@ -542,11 +553,17 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     public func triggerCaptureGlowAnimation() {
         guard let layer = self.layer else { return }
 
+        // A copy during a glow continues it from what's on screen instead of snapping back to rest first.
+        func live(_ target: CALayer, _ key: String, rest: CGColor) -> CGColor {
+            guard target.animation(forKey: key) != nil, let p = target.presentation() else { return rest }
+            return (key == "borderGlow" ? p.borderColor : p.backgroundColor) ?? rest
+        }
+
         // 1. Solid Shape Background Glow: glass tint illuminates with rich emerald
         let bgGlow = CAKeyframeAnimation(keyPath: "backgroundColor")
         bgGlow.values = [
-            tint.cgColor,
-            NSColor(red: 0.12, green: 0.44, blue: 0.22, alpha: 0.88).cgColor, // Luminous emerald glass fill
+            live(layer, "bgGlow", rest: tint.cgColor),
+            glowFill.cgColor,
             tint.cgColor
         ]
         bgGlow.keyTimes = [0.0, 0.30, 1.0]
@@ -557,8 +574,8 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         // 2. Radiant Glass Rim Glow
         let borderGlow = CAKeyframeAnimation(keyPath: "borderColor")
         borderGlow.values = [
-            hairline.cgColor,
-            NSColor(red: 0.30, green: 0.95, blue: 0.50, alpha: 0.95).cgColor,
+            live(layer, "borderGlow", rest: hairline.cgColor),
+            glowRim.cgColor,
             hairline.cgColor
         ]
         borderGlow.keyTimes = [0.0, 0.30, 1.0]
@@ -570,7 +587,7 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         if activeNotice == nil, let dotLayer = dotView.layer {
             let dotAnim = CAKeyframeAnimation(keyPath: "backgroundColor")
             dotAnim.values = [
-                NSColor(red: 0.20, green: 0.85, blue: 0.40, alpha: 1.0).cgColor,
+                live(dotLayer, "dotFlash", rest: NSColor(red: 0.20, green: 0.85, blue: 0.40, alpha: 1.0).cgColor),
                 NSColor(red: 0.65, green: 1.0, blue: 0.75, alpha: 1.0).cgColor,
                 NSColor(red: 0.20, green: 0.85, blue: 0.40, alpha: 1.0).cgColor
             ]
@@ -580,24 +597,43 @@ public final class DeckHUDView: NSView, NSDraggingSource {
             dotLayer.add(dotAnim, forKey: "dotFlash")
         }
 
-        // 4. Subtle Count Pop (skipped with Reduce Motion; the colour glow above still signals the capture)
+        // 4. Count pop: a small, quick bump (skipped with Reduce Motion; the colour glow above still signals the capture)
         if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let countLayer = countLabel.layer {
+            let current = (countLayer.animation(forKey: "pop") != nil
+                ? countLayer.presentation()?.value(forKeyPath: "transform.scale") as? CGFloat : nil) ?? 1.0
             let popAnim = CAKeyframeAnimation(keyPath: "transform.scale")
-            popAnim.values = [1.0, 1.22, 1.0]
-            popAnim.keyTimes = [0.0, 0.35, 1.0]
-            popAnim.duration = 0.40
-            popAnim.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            popAnim.values = [current, 1.08, 1.0]
+            popAnim.keyTimes = [0.0, 0.3, 1.0]
+            popAnim.duration = 0.30
+            popAnim.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
             countLayer.add(popAnim, forKey: "pop")
         }
     }
 
-    /// Delightful puff/dissolve animation when discarded via Shake-to-Clear gesture
+    /// Shake to clear: the badge shrinks slightly and fades out, then Que is cleared.
     public func triggerDismissPuffAnimation(completion: @escaping () -> Void) {
+        let curve = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+        // Shrink a little around the centre while fading, so it reads as let go rather than switched off.
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let layer = layer {
+            let c = CGPoint(x: bounds.midX, y: bounds.midY)   // a view's layer scales from its corner, so pivot on the centre
+            var t = CATransform3DMakeTranslation(c.x, c.y, 0)
+            t = CATransform3DScale(t, 0.9, 0.9, 1)
+            t = CATransform3DTranslate(t, -c.x, -c.y, 0)
+            let shrink = CABasicAnimation(keyPath: "transform")
+            shrink.fromValue = CATransform3DIdentity
+            shrink.toValue = t
+            shrink.duration = 0.20
+            shrink.timingFunction = curve
+            shrink.fillMode = .forwards
+            shrink.isRemovedOnCompletion = false
+            layer.add(shrink, forKey: "dismissShrink")
+        }
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.20
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.timingFunction = curve
             self.animator().alphaValue = 0.0
         }, completionHandler: {
+            self.layer?.removeAnimation(forKey: "dismissShrink")
             self.alphaValue = 1.0
             completion()
         })

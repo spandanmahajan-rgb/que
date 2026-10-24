@@ -181,7 +181,7 @@ public struct DeckControlCenterView: View {
 
     /// Page slide normally; a plain cross-fade when Reduce Motion is on.
     private var pageAnimation: Animation {
-        reduceMotion ? .easeInOut(duration: 0.15) : .spring(response: 0.35, dampingFraction: 0.82)
+        reduceMotion ? .easeInOut(duration: 0.15) : .spring(response: 0.35, dampingFraction: 1.0)
     }
 
     public init(
@@ -746,7 +746,7 @@ public struct DeckControlCenterView: View {
 
     /// Expand/collapse motion for a guide row; a plain fade when Reduce Motion is on.
     private var rowAnimation: Animation {
-        reduceMotion ? .easeInOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.86)
+        reduceMotion ? .easeInOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 1.0)
     }
 
     private func instructionRow(_ item: GuideItem, proxy: ScrollViewProxy) -> some View {

@@ -12,6 +12,10 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
 
     private let hudView: DeckHUDView
     private var trackingTimer: Timer?
+    private var trackingLink: AnyObject?          // CADisplayLink on macOS 14+ (typed loosely so the macOS 13 build compiles)
+    private var lastTickTime: CFTimeInterval = 0
+    /// Time since the previous tick in 60 fps frames (1 at a steady 60 fps), so a late tick doesn't make the badge lurch.
+    private var tickScale: CGFloat = 1
     private var previousCount: Int = 0
     private var wasMagnetHeld = false
 
@@ -204,16 +208,35 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
     /// forever (just to hide an already-hidden panel), which keeps the CPU awake while idle.
     /// refreshHUD() starts/stops it as the deck fills and empties; calling this on an empty deck is a no-op.
     public func startTracking(interval: TimeInterval = 0.016) {
-        guard trackingTimer == nil, isActive else { return }
-        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            self?.updatePosition()
+        guard trackingTimer == nil, trackingLink == nil, isActive else { return }
+        lastTickTime = CACurrentMediaTime()
+        if #available(macOS 14.0, *) {
+            // Synced to the screen the badge is on; capped at 60 fps so shake detection behaves the same on 120 Hz screens.
+            let link = displayLink(target: self, selector: #selector(trackingTick))
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
+            link.add(to: .main, forMode: .common)
+            trackingLink = link
+        } else {
+            let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in self?.trackingTick() }
+            RunLoop.main.add(timer, forMode: .common)
+            trackingTimer = timer
         }
-        RunLoop.main.add(timer, forMode: .common)
-        self.trackingTimer = timer
         startScreenshotWatch()
     }
 
+    @objc private func trackingTick() {
+        let now = CACurrentMediaTime()
+        tickScale = min(max(CGFloat(now - lastTickTime) * 60, 0.25), 3)
+        lastTickTime = now
+        updatePosition()
+    }
+
+    /// A per-frame smoothing factor (tuned at 60 fps) adjusted for this tick's real length.
+    private func perTick(_ factor: CGFloat) -> CGFloat { 1 - pow(1 - factor, tickScale) }
+
     public func stopTracking() {
+        if #available(macOS 14.0, *) { (trackingLink as? CADisplayLink)?.invalidate() }
+        trackingLink = nil
         trackingTimer?.invalidate()
         trackingTimer = nil
         stopScreenshotWatch()
@@ -322,8 +345,8 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
             currentW = target.width
             currentH = target.height
         } else {
-            currentW += (target.width - currentW) * 0.3
-            currentH += (target.height - currentH) * 0.3
+            currentW += (target.width - currentW) * perTick(0.3)
+            currentH += (target.height - currentH) * perTick(0.3)
             // Snap the last point: with whole-point rounding below, a 1pt gap would otherwise never close.
             if abs(target.width - currentW) < 1.5 { currentW = target.width }
             if abs(target.height - currentH) < 1.5 { currentH = target.height }
@@ -365,7 +388,7 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
             targetX = max(bounds.minX + 6, min(targetX, bounds.maxX - currentW - 6))
             targetY = max(bounds.minY + 6, min(targetY, bounds.maxY - currentH - 6))
 
-            let factor: CGFloat = wasMagnetHeld ? 0.85 : 0.92
+            let factor = perTick(wasMagnetHeld ? 0.85 : 0.92)
             let dx = (targetX - currentOrigin.x) * factor
             let dy = (targetY - currentOrigin.y) * factor
             setFrame(NSRect(x: currentOrigin.x + dx, y: currentOrigin.y + dy, width: currentW, height: currentH), display: sizeChanged)
@@ -401,8 +424,8 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
         }
 
         // Fluid spring interpolation towards edge-aware target
-        let dx = (targetX - currentOrigin.x) * 0.35
-        let dy = (targetY - currentOrigin.y) * 0.35
+        let dx = (targetX - currentOrigin.x) * perTick(0.35)
+        let dy = (targetY - currentOrigin.y) * perTick(0.35)
         setFrame(NSRect(x: currentOrigin.x + dx, y: currentOrigin.y + dy, width: currentW, height: currentH), display: sizeChanged)
     }
 
@@ -433,9 +456,34 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
                 let mousePos = NSEvent.mouseLocation
                 setFrameOrigin(NSPoint(x: mousePos.x + 22, y: mousePos.y - frame.height - 10))
                 orderFrontRegardless()
+                // The full badge arrives with a short scale-and-fade instead of popping in (the dot case already fades above).
+                if !(notice != nil || isWorking) || !queueManager.isEmpty { animateArrival() }
             }
         } else {
             orderOut(nil)
+        }
+    }
+
+    private func animateArrival() {
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let curve = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+        alphaValue = 0
+        if !reduceMotion, let layer = hudView.layer {
+            let b = hudView.bounds
+            var t = CATransform3DMakeTranslation(b.midX, b.midY, 0)   // a view's layer scales from its corner: pivot on the centre
+            t = CATransform3DScale(t, 0.92, 0.92, 1)
+            t = CATransform3DTranslate(t, -b.midX, -b.midY, 0)
+            let grow = CABasicAnimation(keyPath: "transform")
+            grow.fromValue = t
+            grow.toValue = CATransform3DIdentity
+            grow.duration = 0.20
+            grow.timingFunction = curve
+            layer.add(grow, forKey: "arrive")
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = reduceMotion ? 0.15 : 0.20
+            context.timingFunction = curve
+            self.animator().alphaValue = 1
         }
     }
 
