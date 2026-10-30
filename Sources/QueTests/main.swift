@@ -1227,6 +1227,56 @@ func testGIFSegmentSelection() {
     print("✅ testGIFSegmentSelection passed!")
 }
 
+/// Shake to clear needs a deliberate shake: a quick flick or jitter doesn't clear Que.
+func testShakeNeedsIntent() {
+    print("Running testShakeNeedsIntent...")
+    /// Replays a side-to-side path at 60 fps: `swings` swings of `width` pt, each taking `swingTime` s. True if it cleared.
+    func shake(swings: Int, width: CGFloat, swingTime: Double, start: Double = 1000) -> Bool {
+        let detector = ShakeDetector()
+        var fired = false
+        detector.onShakeDetected = { fired = true }
+        let steps = max(1, Int(swingTime * 60))
+        var t = start, x: CGFloat = 500
+        for s in 0..<swings {
+            let dir: CGFloat = s % 2 == 0 ? 1 : -1
+            for _ in 0..<steps { x += dir * width / CGFloat(steps); t += 1.0 / 60; detector.observe(x: x, at: t) }
+        }
+        return fired
+    }
+    assert(shake(swings: 6, width: 120, swingTime: 0.07), "A deliberate fast shake clears")
+    assert(shake(swings: 7, width: 90, swingTime: 0.07), "Three-plus quick back-and-forths clear")
+    assert(!shake(swings: 3, width: 250, swingTime: 0.06), "A fast flick and back doesn't clear")
+    assert(!shake(swings: 5, width: 120, swingTime: 0.07), "Two back-and-forths aren't enough any more")
+    assert(!shake(swings: 6, width: 80, swingTime: 0.15), "A slower wiggle doesn't clear")
+    assert(!shake(swings: 30, width: 20, swingTime: 0.034), "Small fast jitter doesn't clear")
+    print("✅ testShakeNeedsIntent passed!")
+}
+
+/// Make GIF from selected images: one frame per image, each held the chosen seconds, all on the first image's canvas.
+func testSlideshowGIF() {
+    print("Running testSlideshowGIF...")
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("que-slideshow-\(UUID().uuidString)")
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let a = dir.appendingPathComponent("a.png"), b = dir.appendingPathComponent("b.png")
+    try! createMockPNGData().write(to: a)
+    let wide = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 40, pixelsHigh: 10, bitsPerSample: 8, samplesPerPixel: 4,
+                                hasAlpha: true, isPlanar: false, colorSpaceName: .calibratedRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    try! wide.representation(using: .png, properties: [:])!.write(to: b)
+
+    let data = VideoToGIFConverter.shared.slideshowGIF(imageURLs: [a, b, a], secondsEach: 2)
+    let source = data.flatMap { CGImageSourceCreateWithData($0 as CFData, nil) }
+    assert(source.map { CGImageSourceGetCount($0) } == 3, "One frame per image")
+    let props = CGImageSourceCopyPropertiesAtIndex(source!, 1, nil) as? [CFString: Any]
+    let gif = props?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+    assert((gif?[kCGImagePropertyGIFDelayTime] as? Double) == 2, "Held 2 s")
+    let frame = CGImageSourceCreateImageAtIndex(source!, 1, nil)!
+    assert(frame.width == 40 && frame.height == 40, "First image's shape, sized for the largest image")
+    assert(VideoToGIFConverter.shared.slideshowGIF(imageURLs: [a, dir.appendingPathComponent("gone.png")], secondsEach: 1) == nil,
+           "A missing image fails instead of silently dropping it")
+    print("✅ testSlideshowGIF passed!")
+}
+
 /// The filmstrip with real mouse events: each interaction moves only its own thing. Handles and the part never move
 /// the playhead; only a press on the dot drags it (and makes it a pill); a click elsewhere seeks without dragging.
 func testTimelineInteractions() {
@@ -1419,6 +1469,8 @@ testGIFSegmentSelection()
 testCopiedVideoKeepsItsSource()
 testStreamOnlyPinsBecomeFiles()
 testTimelineInteractions()
+testSlideshowGIF()
+testShakeNeedsIntent()
 testReplaceGIFInPlace()
 testGIFSourceVideoCleanup()
 testGIFSegmentEditingEndToEnd()

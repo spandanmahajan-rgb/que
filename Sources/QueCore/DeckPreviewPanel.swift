@@ -14,6 +14,7 @@ public final class DeckPreviewPanel: NSPanel {
     private static let gap: CGFloat = 6
     private static let inset: CGFloat = 16
     private static let headerHeight: CGFloat = 56
+    private static let footerHeight: CGFloat = 44
     private static let cornerRadius: CGFloat = 14
     private static let maxColumns = 5
     private static let morphCurve = CAMediaTimingFunction(controlPoints: 0.16, 1.0, 0.3, 1.0)
@@ -32,6 +33,12 @@ public final class DeckPreviewPanel: NSPanel {
     private let separator = NSBox()
     private let selectButton = PanelPushButton(isPrimary: false)   // "Select All" / "Select None", like the board picker
     private let removeButton = FirstMouseButton()   // trash: removes the selected images
+    /// Make GIF bar under the grid, shown while 2+ images are selected: seconds per image + the button.
+    private let footerSeparator = NSBox()
+    private let secondsControl = FirstMouseSegmentedControl(labels: ["1s", "2s", "3s"], trackingMode: .selectOne,
+                                                            target: nil, action: nil)
+    private let makeGIFButton = PanelPushButton(isPrimary: true)
+    private var isMakingGIF = false
     /// Multi-select: click toggles a tile, ⇧-click selects a range, clicking empty space clears.
     private var selectedIDs: Set<UUID> = []
     private var lastClickedIndex: Int?
@@ -126,6 +133,20 @@ public final class DeckPreviewPanel: NSPanel {
         removeButton.action = #selector(removeSelectedClicked)
         contentContainer.addSubview(removeButton)
 
+        footerSeparator.boxType = .separator
+        contentContainer.addSubview(footerSeparator)
+        secondsControl.selectedSegment = 0
+        secondsControl.controlSize = .small
+        secondsControl.sizeToFit()
+        secondsControl.toolTip = "How long each image shows"
+        secondsControl.setAccessibilityLabel("Seconds per image")
+        contentContainer.addSubview(secondsControl)
+        makeGIFButton.title = "Make GIF"
+        makeGIFButton.sizeToFit()
+        makeGIFButton.target = self
+        makeGIFButton.action = #selector(makeGIFClicked)
+        contentContainer.addSubview(makeGIFButton)
+
         gridView.onEmptyClick = { [weak self] in self?.setSelection([]) }
 
         scrollView.drawsBackground = false
@@ -167,7 +188,7 @@ public final class DeckPreviewPanel: NSPanel {
         guard let hit = content.hitTest(point) else { return false }
         if hit !== gridView && hit.isDescendant(of: gridView) { return true }   // a thumbnail or its ✕
         if let editor = editor, hit.isDescendant(of: editor) { return true }
-        return hit === selectButton || hit === removeButton
+        return hit === selectButton || hit === removeButton || hit === makeGIFButton || hit.isDescendant(of: secondsControl)
     }
 
     // MARK: - Layout
@@ -207,7 +228,7 @@ public final class DeckPreviewPanel: NSPanel {
         let gridHeight = visibleRows * Self.tile + (ceil(visibleRows) - 1) * Self.gap + Self.inset * 2 + extras
         // Overlay scroll bars float over the grid's 16pt margin, so no width is reserved for them.
         let width = CGFloat(columns) * Self.tile + CGFloat(columns - 1) * Self.gap + Self.inset * 2
-        let height = Self.headerHeight + 1 + gridHeight
+        let height = Self.headerHeight + 1 + gridHeight + (showsFooter ? Self.footerHeight + 1 : 0)
         return Layout(columns: columns, rows: rows, size: NSSize(width: width, height: height),
                       gridHeight: gridHeight, scrolls: scrolls)
     }
@@ -248,17 +269,30 @@ public final class DeckPreviewPanel: NSPanel {
         titleLabel.frame = NSRect(x: Self.inset, y: blockTop - titleH, width: textWidth, height: titleH)
         subtitleLabel.frame = NSRect(x: Self.inset, y: blockTop - titleH - 2 - subH, width: textWidth, height: subH)
         separator.frame = NSRect(x: 0, y: headerTop - Self.headerHeight - 1, width: size.width, height: 1)
-        scrollView.frame = NSRect(x: 0, y: 0, width: size.width, height: layout.gridHeight)
+        let footerH = showsFooter ? Self.footerHeight + 1 : 0
+        scrollView.frame = NSRect(x: 0, y: footerH, width: size.width, height: layout.gridHeight)
+        for view in [footerSeparator, secondsControl, makeGIFButton] as [NSView] { view.isHidden = !showsFooter }
+        footerSeparator.frame = NSRect(x: 0, y: Self.footerHeight, width: size.width, height: 1)
+        let midY = Self.footerHeight / 2
+        secondsControl.frame.origin = NSPoint(x: Self.inset, y: (midY - secondsControl.frame.height / 2).rounded())
+        makeGIFButton.frame.origin = NSPoint(x: size.width - Self.inset - makeGIFButton.frame.width,
+                                             y: (midY - makeGIFButton.frame.height / 2).rounded())
     }
+
+    /// 2+ selected: there is something to make a GIF from.
+    private var showsFooter: Bool { selectedIDs.count >= 2 }
 
     // MARK: - Selection
 
     private func setSelection(_ ids: Set<UUID>) {
+        let hadFooter = showsFooter
         selectedIDs = ids
         for cell in cells { cell.isSelected = ids.contains(cell.item.id) }
         if ids.isEmpty { lastClickedIndex = nil }
         updateHeaderControls()
-        if let qm = queueManager, !qm.isEmpty { layoutContent(layout(for: qm.items)) }
+        guard let qm = queueManager, !qm.isEmpty else { return }
+        if showsFooter != hadFooter { resize(to: layout(for: qm.items), rebuildingGrid: false) }
+        else { layoutContent(layout(for: qm.items)) }
     }
 
     private func cellClicked(_ cell: PreviewThumbnailCell, index: Int, modifiers: NSEvent.ModifierFlags) {
@@ -287,6 +321,30 @@ public final class DeckPreviewPanel: NSPanel {
     @objc private func selectAllClicked() {
         let all = Set(cells.map { $0.item.id })
         setSelection(selectedIDs.count == all.count ? [] : all)
+    }
+
+    /// Makes a GIF from the selection (deck order) and adds it to Que; the originals stay. Keeps going if the preview closes.
+    @objc private func makeGIFClicked() {
+        guard !isMakingGIF, let qm = queueManager, showsFooter else { return }
+        let urls = qm.items.filter { selectedIDs.contains($0.id) }.map { $0.fileURL }
+        let seconds = Double(secondsControl.selectedSegment + 1)
+        isMakingGIF = true
+        makeGIFButton.isEnabled = false
+        VideoToGIFConverter.shared.makeSlideshow(imageURLs: urls, secondsEach: seconds) { [weak self, weak qm] data in
+            guard let self = self else { return }
+            self.isMakingGIF = false
+            self.makeGIFButton.isEnabled = true
+            guard let data = data else {
+                self.subtitleLabel.stringValue = "This GIF couldn't be made. Try again."
+                return
+            }
+            guard let qm = qm else { return }
+            if !qm.isFull, self.queueManager === qm {   // the GIF's arrival refreshes the grid, without the bar
+                self.selectedIDs = []
+                self.lastClickedIndex = nil
+            }
+            qm.add(imageData: data, extension: "gif")   // full: Que shows its own notice
+        }
     }
 
     @objc private func removeSelectedClicked() {
@@ -460,7 +518,12 @@ public final class DeckPreviewPanel: NSPanel {
             return
         }
 
-        let layout = self.layout(for: qm.items)
+        selectedIDs.formIntersection(Set(qm.items.map { $0.id }))   // before the layout: it decides the Make GIF bar
+        resize(to: self.layout(for: qm.items), rebuildingGrid: true)
+    }
+
+    /// Animates the panel to `layout`'s size, keeping its top-left corner.
+    private func resize(to layout: Layout, rebuildingGrid: Bool) {
         let size = layout.size
         let targetFrame = anchoredFrame(for: size)
 
@@ -468,7 +531,7 @@ public final class DeckPreviewPanel: NSPanel {
         contentContainer.frame = NSRect(x: 0, y: frame.height - size.height, width: size.width, height: size.height)
         bevel.frame = contentContainer.frame
         layoutContent(layout)
-        rebuildGrid(layout)
+        if rebuildingGrid { rebuildGrid(layout) }
 
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.20
@@ -641,6 +704,10 @@ final class FlippedView: NSView {
 
 /// NSButton that fires on the first click even though the panel never becomes key.
 final class FirstMouseButton: NSButton {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+final class FirstMouseSegmentedControl: NSSegmentedControl {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 

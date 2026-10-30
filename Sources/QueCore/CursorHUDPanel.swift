@@ -276,6 +276,11 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
     }
 
     private func checkForScreenshotOverlay() {
+        // Temporary demo switch (`defaults write com.cursordeck.app Que_showInCaptures -bool true`): never hide.
+        if UserDefaults.standard.bool(forKey: "Que_showInCaptures") {
+            if isHiddenForScreenshot { setHiddenForScreenshot(false) }
+            return
+        }
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
             as? [[String: Any]] ?? []
         let overlayUp = windows.contains { window in

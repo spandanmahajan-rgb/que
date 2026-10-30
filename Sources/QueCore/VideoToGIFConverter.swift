@@ -84,7 +84,7 @@ public final class VideoToGIFConverter {
             }
 
             guard !frames.isEmpty,
-                  let finalData = self.encodeImagesToGIF(frames: frames, delays: nil, fps: fps) else {
+                  let finalData = self.encodeImagesToGIF(frames: frames, count: frames.count, delays: nil, fps: fps) else {
                 DispatchQueue.main.async { completion(nil, 0) }
                 return
             }
@@ -187,13 +187,69 @@ public final class VideoToGIFConverter {
             frames.removeAll()
 
             self.conversionQueue.async {
-                let gifData = self.encodeImagesToGIF(frames: captured, delays: delays, fps: fps)
+                let gifData = self.encodeImagesToGIF(frames: captured, count: captured.count, delays: delays, fps: fps)
                 DispatchQueue.main.async {
                     completion(gifData, gifData?.count ?? 0)
                 }
             }
         }
         RunLoop.main.add(timer, forMode: .common)
+    }
+
+    // MARK: - Images -> GIF
+
+    /// A looping slideshow GIF of `imageURLs` in order, each held `secondsEach`. `completion` is called on the main queue.
+    public func makeSlideshow(imageURLs: [URL], secondsEach: Double, completion: @escaping (Data?) -> Void) {
+        conversionQueue.async {
+            let data = self.slideshowGIF(imageURLs: imageURLs, secondsEach: secondsEach)
+            DispatchQueue.main.async { completion(data) }
+        }
+    }
+
+    /// GIF frames share one size, so every image is fitted (not cropped) onto the first image's shape over white, sized
+    /// for the largest image (up to `maxDimension`) so a small first image doesn't shrink the rest.
+    /// A GIF in the list adds its first frame. nil if any image can't be read.
+    public func slideshowGIF(imageURLs: [URL], secondsEach: Double, maxDimension: CGFloat = 1200) -> Data? {
+        let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                        kCGImageSourceCreateThumbnailWithTransform: true,   // camera rotation
+                                        kCGImageSourceThumbnailMaxPixelSize: maxDimension]
+        let sources = imageURLs.compactMap { CGImageSourceCreateWithURL($0 as CFURL, nil) }
+        guard sources.count == imageURLs.count, secondsEach > 0,
+              let first = sources.first.flatMap({ CGImageSourceCreateThumbnailAtIndex($0, 0, options as CFDictionary) }) else { return nil }
+        // Sizes from the files' headers: decoding every image up front could hold a gigabyte for a big selection.
+        let longest = sources.map { source -> CGFloat in
+            let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+            let w = props?[kCGImagePropertyPixelWidth] as? CGFloat ?? 0, h = props?[kCGImagePropertyPixelHeight] as? CGFloat ?? 0
+            return min(maxDimension, max(w, h))
+        }.max() ?? 0
+        let scale = max(longest, CGFloat(max(first.width, first.height))) / CGFloat(max(first.width, first.height))
+        let canvas = CGSize(width: (CGFloat(first.width) * scale).rounded(), height: (CGFloat(first.height) * scale).rounded())
+        // Frames are made one at a time as the encoder takes them, so only one is held in memory.
+        var made = 0
+        let frames = sources.lazy.compactMap { source -> CGImage? in
+            guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+                  let frame = self.fittedCopy(image, canvas: canvas) else { return nil }
+            made += 1
+            return frame
+        }
+        let data = encodeImagesToGIF(frames: frames, count: sources.count, delays: nil, fps: 1 / secondsEach)
+        return made == sources.count ? data : nil
+    }
+
+    /// Draws `image` aspect-fitted and centred on a white `canvas`-sized 8-bit sRGB bitmap.
+    private func fittedCopy(_ image: CGImage, canvas: CGSize) -> CGImage? {
+        let w = Int(canvas.width), h = Int(canvas.height)
+        let bitmapInfo = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        guard w > 0, h > 0, image.width > 0, image.height > 0,
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: Self.sRGB, bitmapInfo: bitmapInfo) else { return nil }
+        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        let scale = min(canvas.width / CGFloat(image.width), canvas.height / CGFloat(image.height))
+        let dw = CGFloat(image.width) * scale, dh = CGFloat(image.height) * scale
+        ctx.interpolationQuality = .high
+        ctx.draw(image, in: CGRect(x: (canvas.width - dw) / 2, y: (canvas.height - dh) / 2, width: dw, height: dh))
+        return ctx.makeImage()
     }
 
     // MARK: - Encoding
@@ -218,14 +274,15 @@ public final class VideoToGIFConverter {
     }
 
     /// Assembles already-scaled frames into a looping GIF. `delays` (seconds per frame) is optional; nil = uniform 1/fps.
-    private func encodeImagesToGIF(frames: [CGImage], delays: [Double]?, fps: Double) -> Data? {
-        guard !frames.isEmpty else { return nil }
+    private func encodeImagesToGIF<Frames: Sequence>(frames: Frames, count: Int, delays: [Double]?, fps: Double) -> Data?
+    where Frames.Element == CGImage {
+        guard count > 0 else { return nil }
 
         let gifData = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
             gifData as CFMutableData,
             UTType.gif.identifier as CFString,
-            frames.count,
+            count,
             nil
         ) else { return nil }
 
@@ -237,7 +294,7 @@ public final class VideoToGIFConverter {
         CGImageDestinationSetProperties(destination, fileProperties as CFDictionary)
 
         let uniformDelay = 1.0 / fps
-        for (i, frame) in frames.enumerated() {
+        for (i, frame) in frames.enumerated() {   // a lazy sequence makes each frame only here
             // GIF delays are centiseconds; browsers/Slides clamp < 2cs, so don't go below that.
             let delay = max(0.02, delays?[i] ?? uniformDelay)
             let frameProperties: [String: Any] = [
