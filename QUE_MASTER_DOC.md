@@ -48,7 +48,7 @@ Designers, researchers, and creators gathering visual references suffer from con
 | **Edit GIF** | Hover a GIF in the Preview Grid, click the pencil | The preview expands into a small editor with the whole source video as a filmstrip. Drag the edges, or the highlighted part, to choose another 0.5 to 8 seconds, check it in the loop, then Update GIF swaps it in place (same spot, nothing duplicated). Cancel or a failure keeps the original. Que keeps the downloaded video next to its GIF until the GIF leaves Que. |
 | **Preview Grid** | `⌥ + Click`, or tap `⌃` twice then click | Unfurls a floating glass grid (black in dark mode, white in light mode) displaying all accumulated thumbnails, with images and GIFs in their own sections with individual `✕` delete buttons. Click thumbnails to select several (⇧-click for a range, Select All in the header), then drag them out together or remove them with the trash button; dragged images stay in Que. Holding `⌥` from the opening click still selects. Dismisses on `⌥ + Click` outside the thumbnails, clicking outside, or moving the cursor away (Esc can't reach it: the grid never takes keyboard focus). |
 | **Make GIF** | Select 2 or more images in the Preview Grid | A bar under the grid offers 1s, 2s or 3s per image and a Make GIF button. The images (in the order they joined Que) become a looping GIF, up to 1200 px, that joins Que. The originals stay. |
-| **Shake to Clear** | Rapid cursor wiggle | Shaking the mouse back and forth on purpose (about three quick swings) clears Que: it shrinks slightly as it fades away. A quick flick or small jitter does nothing. |
+| **Shake to Clear** | Rapid cursor wiggle | Shaking the mouse back and forth on purpose (about two and a half quick swings) clears Que: it shrinks slightly as it fades away. A quick flick or small jitter does nothing. |
 | **Control Center** | Click Menu Bar Icon | Opens as a native macOS menu (256×372 pt), so the menu bar icon stays highlighted while it's open, like Battery or Wi-Fi. Switches (Que on/off, Smart Filter, Screenshots, Shake to Clear, Launch at Login), actions (Copy All, how Que is called over: "⌥ Hold" or "⌃⌃ Tap", blue while active, click to switch; Clear), then four menu-style rows: How to Use, Check for Updates, Report a Problem and Quit. |
 | **Scroll passes through** | Scroll while Que is under the pointer | Scrolling (e.g. ⌥ + scroll to zoom in Illustrator, Figma, Maps) goes to the app underneath: Que becomes click-through until the wheel is quiet for 0.35 s. The first tick is lost. |
 | **Report a Problem** | Control Center or right-click menu | Opens a short Google Form in the browser with Que's version, macOS, the Mac's chip and Que's last few messages already filled in (board names and links removed; never clipboard contents or images). The user adds what happened and an optional email. Que sends nothing itself. |
@@ -220,7 +220,7 @@ The entire build, codesigning, packaging, git tagging, and GitHub release is aut
 
 ## 7. Current Project State & Ongoing Discussions
 
-* **Current Released Version**: **v2.13.0**
+* **Current Released Version**: **v2.13.1**
 * **Repository**: `spandanmahajan-rgb/que` (renamed from `cursor-deck`; GitHub redirects the old address)
 * **Under Discussion**: nothing open right now.
 

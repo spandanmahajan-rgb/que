@@ -178,7 +178,7 @@ public final class DeckQueueManager {
         }
     }
 
-    private struct PreparedFile { let url: URL; let size: Int; let originalName: String? }
+    private struct PreparedFile { let url: URL; let size: Int; let originalName: String?; var originalURL: URL? = nil }
 
     private func commit(_ prepared: [PreparedFile], preparedIn dir: URL, completion: (([DeckItem]) -> Void)?) {
         // The deck was cleared while these were being prepared: they belong to the old session, drop them.
@@ -190,7 +190,7 @@ public final class DeckQueueManager {
         let room = max(0, capacity - items.count)
         prepared.dropFirst(room).forEach { try? FileManager.default.removeItem(at: $0.url) }
         if prepared.count > room { onFull?() }
-        let added = prepared.prefix(room).map { DeckItem(type: .image, fileURL: $0.url, originalFileName: $0.originalName, dataSize: $0.size) }
+        let added = prepared.prefix(room).map { DeckItem(type: .image, fileURL: $0.url, originalFileName: $0.originalName, dataSize: $0.size, originalURL: $0.originalURL) }
         guard !added.isEmpty else { completion?([]); return }
         items += added
         added.forEach { DeckThumbnailCache.shared.prewarm($0.fileURL) }
@@ -210,7 +210,7 @@ public final class DeckQueueManager {
         guard (try? FileManager.default.copyItem(at: source, to: target)) != nil else { return nil }
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
         let size = (try? FileManager.default.attributesOfItem(atPath: target.path)[.size] as? Int) ?? 0
-        return PreparedFile(url: target, size: size, originalName: source.lastPathComponent)
+        return PreparedFile(url: target, size: size, originalName: source.lastPathComponent, originalURL: source)
     }
 
     private static func write(_ data: Data, ext: String, into dir: URL, index: Int, originalName: String?) -> PreparedFile? {

@@ -993,14 +993,14 @@ final class PreviewThumbnailCell: NSView, NSDraggingSource {
         // The whole selection travels together when this tile is part of it (in deck order), like Finder.
         let group = dragGroup?(self) ?? [self]
         let dragItems = group.map { cell -> NSDraggingItem in
-            let dragItem = NSDraggingItem(pasteboardWriter: cell.item.fileURL as NSURL)
+            let dragItem = NSDraggingItem(pasteboardWriter: cell.item.exportURL as NSURL)
             dragItem.setDraggingFrame(convert(cell.bounds, from: cell), contents: cell.thumbnailImage)
             return dragItem
         }
         let session = beginDraggingSession(with: dragItems, event: event, source: self)
         session.animatesToStartingPositionsOnCancelOrFail = true
         // Same extra flavour the pill's drag adds, for apps like WhatsApp that read the legacy file list.
-        session.draggingPasteboard.setPropertyList(group.map { $0.item.fileURL.path }, forType: .init("NSFilenamesPboardType"))
+        session.draggingPasteboard.setPropertyList(group.map { $0.item.exportURL.path }, forType: .init("NSFilenamesPboardType"))
         onDragOut?(true)
     }
 

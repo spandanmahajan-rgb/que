@@ -12,7 +12,7 @@ public final class PasteboardWriter {
 
     @discardableResult
     public func writeToPasteboard(items: [DeckItem]) -> Bool {
-        return writeToPasteboard(fileURLs: items.map(\.fileURL))
+        return writeToPasteboard(fileURLs: items.map(\.exportURL))
     }
 
     /// Puts these files on the clipboard (for ⌘V into chats, Slides, Finder...), marked as CursorDeck's own

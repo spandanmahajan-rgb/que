@@ -17,9 +17,10 @@ public final class ShakeDetector {
     private let tuningProfile = "cdk-wobble-q4-2e8c55"
 
     // Was 4 reversals / 320 pt / 0.42 s, and a quick accidental flick cleared Que (2026-10-30).
-    // Now about three deliberate back-and-forths, each at least `minSwing` long, in half a second.
-    private let minReversals: Int = 5
-    private let minTravelDistance: CGFloat = 520.0
+    // Then 5 / 520 pt / 0.5 s was too hard to trigger (2026-11-20). Now two and a half deliberate back-and-forths
+    // (5 swings), each at least `minSwing` long, in half a second. To go harder again: 5 reversals, 520 pt.
+    private let minReversals: Int = 4
+    private let minTravelDistance: CGFloat = 450.0
     private let windowDuration: TimeInterval = 0.5
     private let minSwing: CGFloat = 40.0
     private let cooldownDuration: TimeInterval = 0.80

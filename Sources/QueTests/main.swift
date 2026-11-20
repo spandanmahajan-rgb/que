@@ -414,6 +414,17 @@ func testBackgroundImport() {
     let first = CGImageSourceCreateWithURL(items[0].fileURL as CFURL, nil).flatMap { CGImageSourceCopyPropertiesAtIndex($0, 0, nil) } as? [CFString: Any]
     assert(first?[kCGImagePropertyPixelWidth] as? Int == 20 && first?[kCGImagePropertyPixelHeight] as? Int == 40,
            "Phone-photo rotation is applied (40x20 rotated 90° → 20x40)")
+
+    // Drag/paste hands out the user's own file while it exists (Illustrator links stay valid), else Que's copy.
+    assert(items[0].originalURL == nil && items[1].originalURL == nil, "Converted images have no original to link to")
+    assert(items[0].exportURL == items[0].fileURL, "Converted images go out as Que's PNG")
+    assert(items[2].exportURL == png, "A file copied as-is goes out as the original")
+    PasteboardWriter.shared.writeToPasteboard(items: [items[2]])
+    assert((NSPasteboard.general.propertyList(forType: .init("NSFilenamesPboardType")) as? [String]) == [png.path],
+           "Paste offers the original path")
+    try! FileManager.default.removeItem(at: png)
+    assert(items[2].exportURL == items[2].fileURL, "Original gone: falls back to Que's copy")
+    assert(FileManager.default.fileExists(atPath: items[2].fileURL.path), "Que's copy is untouched")
     print("✅ testBackgroundImport passed!")
 }
 
@@ -1245,8 +1256,9 @@ func testShakeNeedsIntent() {
     }
     assert(shake(swings: 6, width: 120, swingTime: 0.07), "A deliberate fast shake clears")
     assert(shake(swings: 7, width: 90, swingTime: 0.07), "Three-plus quick back-and-forths clear")
+    assert(shake(swings: 5, width: 120, swingTime: 0.07), "Two and a half back-and-forths clear")
     assert(!shake(swings: 3, width: 250, swingTime: 0.06), "A fast flick and back doesn't clear")
-    assert(!shake(swings: 5, width: 120, swingTime: 0.07), "Two back-and-forths aren't enough any more")
+    assert(!shake(swings: 4, width: 120, swingTime: 0.07), "Two back-and-forths aren't enough")
     assert(!shake(swings: 6, width: 80, swingTime: 0.15), "A slower wiggle doesn't clear")
     assert(!shake(swings: 30, width: 20, swingTime: 0.034), "Small fast jitter doesn't clear")
     print("✅ testShakeNeedsIntent passed!")

@@ -851,7 +851,7 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         //   • NSFilenamesPboardType
         //   • Apple URL pasteboard type
         let draggingItems: [NSDraggingItem] = items.enumerated().map { idx, item in
-            let dragItem = NSDraggingItem(pasteboardWriter: item.fileURL as NSURL)
+            let dragItem = NSDraggingItem(pasteboardWriter: item.exportURL as NSURL)
 
             // Use the actual image as the drag thumbnail (64pt square, stacked)
             let thumbSize: CGFloat = 64
@@ -874,7 +874,7 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         session.draggingFormation = .stack
 
         // 3. Register global NSFilenamesPboardType paths array on dragging pasteboard (critical for WhatsApp/Catalyst)
-        let paths = items.map { $0.fileURL.path }
+        let paths = items.map { $0.exportURL.path }
         session.draggingPasteboard.setPropertyList(paths, forType: .init("NSFilenamesPboardType"))
 
         // Park badge off-screen so it doesn't block the drag target
